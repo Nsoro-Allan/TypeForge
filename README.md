@@ -117,4 +117,4 @@ MIT (or whatever you decide — update this)
 
 ---
 
-Made with ⚡ by [Nsoro Allan](https://github.com/Nsoro-Allan)
+Developed by [Nsoro Allan](https://github.com/Nsoro-Allan)
