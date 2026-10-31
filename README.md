@@ -101,14 +101,4 @@ src/
 | `Esc`        | (planned) Focus mode / settings |
 | Typing       | Starts the timer    |
 
-## Contributing
-
-This project is still young. PRs and ideas are very welcome, especially around:
-
-1. Results screen + local history
-2. Themes system
-3. Punctuation / numbers / quotes
-4. Sound design
-5. Accessibility
-
 Developed by [Nsoro Allan](https://github.com/Nsoro-Allan)
