@@ -40,11 +40,70 @@ export const commonWords = [
   "close", "start", "finish", "begin", "end", "yes", "no", "maybe", "always", "never"
 ];
 
-export function generateWords(count: number): string[] {
-  const result: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const index = Math.floor(Math.random() * commonWords.length);
-    result.push(commonWords[index]);
+const punctuationChars = [".", ",", "!", "?", ";", ":", "'", '"', "-", "(", ")"];
+const numberWords = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "20", "30", "50", "100", "1000"];
+
+function addPunctuation(word: string): string {
+  if (Math.random() < 0.25) {
+    const punc = punctuationChars[Math.floor(Math.random() * punctuationChars.length)];
+    // simple rules
+    if (punc === "'" || punc === '"') return `${punc}${word}${punc}`;
+    if (punc === "(") return `(${word})`;
+    return word + punc;
   }
+  return word;
+}
+
+function maybeNumber(): string | null {
+  if (Math.random() < 0.15) {
+    return numberWords[Math.floor(Math.random() * numberWords.length)];
+  }
+  return null;
+}
+
+export type WordMode = "normal" | "punctuation" | "numbers" | "both";
+
+export function generateWords(count: number, mode: WordMode = "normal"): string[] {
+  const result: string[] = [];
+  let lastWord = "";
+
+  for (let i = 0; i < count; i++) {
+    let word: string;
+
+    // Prefer numbers when requested
+    if ((mode === "numbers" || mode === "both") && Math.random() < 0.2) {
+      word = numberWords[Math.floor(Math.random() * numberWords.length)];
+    } else {
+      // avoid immediate repeats
+      do {
+        const index = Math.floor(Math.random() * commonWords.length);
+        word = commonWords[index];
+      } while (word === lastWord && commonWords.length > 1);
+
+      if (mode === "punctuation" || mode === "both") {
+        word = addPunctuation(word);
+      }
+    }
+
+    result.push(word);
+    lastWord = word;
+  }
+
   return result;
+}
+
+/** Simple quote bank for quote mode */
+export const quotes = [
+  "The only way to do great work is to love what you do.",
+  "In the middle of every difficulty lies opportunity.",
+  "It does not matter how slowly you go as long as you do not stop.",
+  "Everything you can imagine is real.",
+  "The future belongs to those who believe in the beauty of their dreams.",
+  "Do not go where the path may lead, go instead where there is no path and leave a trail.",
+  "Success is not final, failure is not fatal: it is the courage to continue that counts.",
+  "The best time to plant a tree was 20 years ago. The second best time is now.",
+];
+
+export function getRandomQuote(): string {
+  return quotes[Math.floor(Math.random() * quotes.length)];
 }

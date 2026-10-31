@@ -1,11 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { generateWords } from "../lib/words";
-import type { TestConfig, TestStats, CharacterStatus } from "../types";
+import { generateWords, getRandomQuote } from "../lib/words";
+import { saveResult } from "../lib/storage";
+import type {
+  TestConfig,
+  TestStats,
+  CharacterStatus,
+  TestResult,
+  WordMode,
+} from "../types";
 
 export function useTypingEngine(config: TestConfig) {
   const [words, setWords] = useState<string[]>([]);
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
-  const [typedWords, setTypedWords] = useState<string[]>([]); // what the user actually typed
+  const [typedWords, setTypedWords] = useState<string[]>([]);
   const [isFinished, setIsFinished] = useState(false);
   const [isStarted, setIsStarted] = useState(false);
   const [timeElapsed, setTimeElapsed] = useState(0);
@@ -13,24 +20,41 @@ export function useTypingEngine(config: TestConfig) {
   const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
+  const hasSavedRef = useRef(false);
 
   const resetTest = useCallback(() => {
-    const count = config.mode === "words" ? config.wordCount || 25 : 80;
+    let newWords: string[];
 
-    setWords(generateWords(count));
+    if (config.mode === "quote") {
+      const quote = getRandomQuote();
+      newWords = quote.split(" ");
+    } else if (config.mode === "zen") {
+      // Generate a long stream for zen
+      newWords = generateWords(200, (config.wordMode as WordMode) || "normal");
+    } else {
+      const count =
+        config.mode === "words" ? config.wordCount || 25 : 100;
+      newWords = generateWords(
+        count,
+        (config.wordMode as WordMode) || "normal"
+      );
+    }
+
+    setWords(newWords);
     setCurrentWordIndex(0);
     setTypedWords([]);
     setIsFinished(false);
     setIsStarted(false);
     setTimeElapsed(0);
     startTimeRef.current = null;
+    hasSavedRef.current = false;
 
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
 
-    setTimeout(() => inputRef.current?.focus(), 10);
+    setTimeout(() => inputRef.current?.focus(), 20);
   }, [config]);
 
   useEffect(() => {
@@ -47,7 +71,11 @@ export function useTypingEngine(config: TestConfig) {
       const elapsed = (Date.now() - startTimeRef.current) / 1000;
       setTimeElapsed(elapsed);
 
-      if (config.mode === "time" && config.duration && elapsed >= config.duration) {
+      if (
+        config.mode === "time" &&
+        config.duration &&
+        elapsed >= config.duration
+      ) {
         setIsFinished(true);
         if (timerRef.current) clearInterval(timerRef.current);
       }
@@ -57,6 +85,30 @@ export function useTypingEngine(config: TestConfig) {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [isStarted, isFinished, config]);
+
+  // Save result once when finished
+  useEffect(() => {
+    if (isFinished && !hasSavedRef.current && isStarted) {
+      hasSavedRef.current = true;
+      const stats = getStats();
+
+      const result: TestResult = {
+        ...stats,
+        mode: config.mode,
+        config,
+        timestamp: Date.now(),
+        wordsTyped: currentWordIndex + (typedWords[currentWordIndex] ? 1 : 0),
+        characters: {
+          correct: stats.correctChars,
+          incorrect: stats.incorrectChars,
+          extra: stats.extraChars,
+          missed: stats.missedChars,
+        },
+      };
+
+      saveResult(result);
+    }
+  }, [isFinished]);
 
   const getStats = useCallback((): TestStats => {
     let correct = 0;
@@ -77,7 +129,7 @@ export function useTypingEngine(config: TestConfig) {
       }
     });
 
-    // Include the current word being typed
+    // Include the current word being typed (if not finished)
     if (!isFinished && currentWordIndex < words.length) {
       const typed = typedWords[currentWordIndex] || "";
       const original = words[currentWordIndex] || "";
@@ -97,12 +149,13 @@ export function useTypingEngine(config: TestConfig) {
 
     const wpm = Math.round(correct / 5 / minutes);
     const rawWpm = Math.round(totalTyped / 5 / minutes);
-    const accuracy = totalTyped === 0 ? 100 : Math.round((correct / totalTyped) * 100);
+    const accuracy =
+      totalTyped === 0 ? 100 : Math.round((correct / totalTyped) * 100);
 
     return {
-      wpm: isNaN(wpm) ? 0 : Math.max(0, wpm),
-      rawWpm: isNaN(rawWpm) ? 0 : Math.max(0, rawWpm),
-      accuracy: isNaN(accuracy) ? 100 : accuracy,
+      wpm: Number.isFinite(wpm) ? Math.max(0, wpm) : 0,
+      rawWpm: Number.isFinite(rawWpm) ? Math.max(0, rawWpm) : 0,
+      accuracy: Number.isFinite(accuracy) ? accuracy : 100,
       correctChars: correct,
       incorrectChars: incorrect,
       extraChars: extra,
@@ -113,7 +166,13 @@ export function useTypingEngine(config: TestConfig) {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (isFinished) return;
+      if (isFinished) {
+        if (e.key === "Tab") {
+          e.preventDefault();
+          resetTest();
+        }
+        return;
+      }
 
       // Start timer on first real key
       if (!isStarted && e.key.length === 1) {
@@ -123,6 +182,13 @@ export function useTypingEngine(config: TestConfig) {
 
       // Tab = restart
       if (e.key === "Tab") {
+        e.preventDefault();
+        resetTest();
+        return;
+      }
+
+      // Escape can also restart in zen or finished
+      if (e.key === "Escape") {
         e.preventDefault();
         resetTest();
         return;
@@ -154,16 +220,34 @@ export function useTypingEngine(config: TestConfig) {
       if (e.key === " ") {
         e.preventDefault();
 
-        // Don't allow empty words
         const currentTyped = typedWords[currentWordIndex] || "";
         if (currentTyped.length === 0) return;
 
         const nextIndex = currentWordIndex + 1;
 
-        if (config.mode === "words" && nextIndex >= (config.wordCount || 25)) {
+        // Words mode completion
+        if (
+          config.mode === "words" &&
+          nextIndex >= (config.wordCount || 25)
+        ) {
           setIsFinished(true);
           if (timerRef.current) clearInterval(timerRef.current);
           return;
+        }
+
+        // Quote mode completion
+        if (config.mode === "quote" && nextIndex >= words.length) {
+          setIsFinished(true);
+          if (timerRef.current) clearInterval(timerRef.current);
+          return;
+        }
+
+        // Zen: keep going, generate more words if needed
+        if (config.mode === "zen" && nextIndex >= words.length - 20) {
+          setWords((prev) => [
+            ...prev,
+            ...generateWords(50, (config.wordMode as WordMode) || "normal"),
+          ]);
         }
 
         setCurrentWordIndex(nextIndex);
@@ -177,15 +261,23 @@ export function useTypingEngine(config: TestConfig) {
         setTypedWords((prev) => {
           const next = [...prev];
           const current = next[currentWordIndex] || "";
-          // Limit extra characters a bit
-          if (current.length < (words[currentWordIndex]?.length || 0) + 5) {
+          // Limit extra characters
+          if (current.length < (words[currentWordIndex]?.length || 0) + 8) {
             next[currentWordIndex] = current + e.key;
           }
           return next;
         });
       }
     },
-    [isFinished, isStarted, currentWordIndex, typedWords, words, config, resetTest]
+    [
+      isFinished,
+      isStarted,
+      currentWordIndex,
+      typedWords,
+      words,
+      config,
+      resetTest,
+    ]
   );
 
   // Build character statuses for rendering
@@ -193,7 +285,6 @@ export function useTypingEngine(config: TestConfig) {
     return words.map((word, wordIdx) => {
       const typed = typedWords[wordIdx] || "";
       const result: CharacterStatus[] = [];
-
       const maxLen = Math.max(word.length, typed.length);
 
       for (let i = 0; i < maxLen; i++) {
