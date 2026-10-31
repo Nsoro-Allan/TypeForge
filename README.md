@@ -1,10 +1,10 @@
+<img src="./public/favicon-512.png" width="60" height="60">
+
 # TypeForge.
 
 **A clean, distraction-free desktop typing test** — built with Tauri, React, TypeScript, and Vite.
 
 TypeForge aims to deliver the focused feel of Monkeytype in a native desktop app. No browser tabs, no accounts required, just you and the keyboard.
-
-![TypeForge](https://raw.githubusercontent.com/Nsoro-Allan/TypeForge./main/public/og.png) <!-- replace when you have one -->
 
 ## Features
 
