@@ -111,6 +111,4 @@ This project is still young. PRs and ideas are very welcome, especially around:
 4. Sound design
 5. Accessibility
 
-
-
 Developed by [Nsoro Allan](https://github.com/Nsoro-Allan)
