@@ -1,4 +1,4 @@
-# TypeForge
+# TypeForge.
 
 **A clean, distraction-free desktop typing test** — built with Tauri, React, TypeScript, and Vite.
 
