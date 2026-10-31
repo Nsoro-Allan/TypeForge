@@ -54,13 +54,6 @@ function addPunctuation(word: string): string {
   return word;
 }
 
-function maybeNumber(): string | null {
-  if (Math.random() < 0.15) {
-    return numberWords[Math.floor(Math.random() * numberWords.length)];
-  }
-  return null;
-}
-
 export type WordMode = "normal" | "punctuation" | "numbers" | "both";
 
 export function generateWords(count: number, mode: WordMode = "normal"): string[] {
