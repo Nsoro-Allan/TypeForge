@@ -5,134 +5,120 @@ import type { TestConfig, TestStats, CharacterStatus } from "../types";
 export function useTypingEngine(config: TestConfig) {
   const [words, setWords] = useState<string[]>([]);
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
-  const [currentCharIndex, setCurrentCharIndex] = useState(0);
-  const [typedHistory, setTypedHistory] = useState<string[]>([]); // what user typed per word
+  const [typedWords, setTypedWords] = useState<string[]>([]); // what the user actually typed
   const [isFinished, setIsFinished] = useState(false);
   const [isStarted, setIsStarted] = useState(false);
-  const [startTime, setStartTime] = useState<number | null>(null);
   const [timeElapsed, setTimeElapsed] = useState(0);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<number | null>(null);
+  const startTimeRef = useRef<number | null>(null);
 
-  // Generate words on config change or restart
   const resetTest = useCallback(() => {
-    const wordCount =
-      config.mode === "words"
-        ? config.wordCount || 25
-        : 100; // generate enough words for time mode
+    const count = config.mode === "words" ? config.wordCount || 25 : 80;
 
-    setWords(generateWords(wordCount));
+    setWords(generateWords(count));
     setCurrentWordIndex(0);
-    setCurrentCharIndex(0);
-    setTypedHistory([]);
+    setTypedWords([]);
     setIsFinished(false);
     setIsStarted(false);
-    setStartTime(null);
     setTimeElapsed(0);
+    startTimeRef.current = null;
 
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
 
-    // Focus the hidden input
-    setTimeout(() => inputRef.current?.focus(), 50);
+    setTimeout(() => inputRef.current?.focus(), 10);
   }, [config]);
 
   useEffect(() => {
     resetTest();
   }, [resetTest]);
 
-  // Timer for time mode
+  // Timer
   useEffect(() => {
-    if (!isStarted || isFinished || config.mode !== "time") return;
+    if (!isStarted || isFinished) return;
 
     timerRef.current = window.setInterval(() => {
-      setTimeElapsed((prev) => {
-        const newTime = prev + 0.1;
-        if (config.duration && newTime >= config.duration) {
-          setIsFinished(true);
-          if (timerRef.current) clearInterval(timerRef.current);
-          return config.duration;
-        }
-        return newTime;
-      });
-    }, 100);
+      if (!startTimeRef.current) return;
+
+      const elapsed = (Date.now() - startTimeRef.current) / 1000;
+      setTimeElapsed(elapsed);
+
+      if (config.mode === "time" && config.duration && elapsed >= config.duration) {
+        setIsFinished(true);
+        if (timerRef.current) clearInterval(timerRef.current);
+      }
+    }, 50);
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [isStarted, isFinished, config]);
 
-  // Calculate live stats
   const getStats = useCallback((): TestStats => {
-    let correctChars = 0;
-    let incorrectChars = 0;
-    let extraChars = 0;
-    let totalTyped = 0;
+    let correct = 0;
+    let incorrect = 0;
+    let extra = 0;
 
-    typedHistory.forEach((typedWord, wordIdx) => {
-      const original = words[wordIdx] || "";
-      const minLen = Math.min(typedWord.length, original.length);
+    typedWords.forEach((typed, i) => {
+      const original = words[i] || "";
+      const len = Math.min(typed.length, original.length);
 
-      for (let i = 0; i < minLen; i++) {
-        if (typedWord[i] === original[i]) correctChars++;
-        else incorrectChars++;
+      for (let j = 0; j < len; j++) {
+        if (typed[j] === original[j]) correct++;
+        else incorrect++;
       }
 
-      if (typedWord.length > original.length) {
-        extraChars += typedWord.length - original.length;
+      if (typed.length > original.length) {
+        extra += typed.length - original.length;
       }
-
-      totalTyped += typedWord.length;
     });
 
-    // Current word being typed
+    // Include the current word being typed
     if (!isFinished && currentWordIndex < words.length) {
-      const currentTyped = typedHistory[currentWordIndex] || "";
+      const typed = typedWords[currentWordIndex] || "";
       const original = words[currentWordIndex] || "";
-      const minLen = Math.min(currentTyped.length, original.length);
+      const len = Math.min(typed.length, original.length);
 
-      for (let i = 0; i < minLen; i++) {
-        if (currentTyped[i] === original[i]) correctChars++;
-        else incorrectChars++;
+      for (let j = 0; j < len; j++) {
+        if (typed[j] === original[j]) correct++;
+        else incorrect++;
       }
-      if (currentTyped.length > original.length) {
-        extraChars += currentTyped.length - original.length;
+      if (typed.length > original.length) {
+        extra += typed.length - original.length;
       }
-      totalTyped += currentTyped.length;
     }
 
-    const timeInMinutes = Math.max(timeElapsed / 60, 0.001);
-    const wpm = Math.round((correctChars / 5) / timeInMinutes);
-    const rawWpm = Math.round((totalTyped / 5) / timeInMinutes);
-    const accuracy =
-      totalTyped === 0
-        ? 100
-        : Math.round((correctChars / (correctChars + incorrectChars + extraChars)) * 100);
+    const totalTyped = correct + incorrect + extra;
+    const minutes = Math.max(timeElapsed / 60, 1 / 60);
+
+    const wpm = Math.round(correct / 5 / minutes);
+    const rawWpm = Math.round(totalTyped / 5 / minutes);
+    const accuracy = totalTyped === 0 ? 100 : Math.round((correct / totalTyped) * 100);
 
     return {
-      wpm: isNaN(wpm) ? 0 : wpm,
-      rawWpm: isNaN(rawWpm) ? 0 : rawWpm,
+      wpm: isNaN(wpm) ? 0 : Math.max(0, wpm),
+      rawWpm: isNaN(rawWpm) ? 0 : Math.max(0, rawWpm),
       accuracy: isNaN(accuracy) ? 100 : accuracy,
-      correctChars,
-      incorrectChars,
-      extraChars,
+      correctChars: correct,
+      incorrectChars: incorrect,
+      extraChars: extra,
       missedChars: 0,
       timeElapsed,
     };
-  }, [typedHistory, words, currentWordIndex, timeElapsed, isFinished]);
+  }, [typedWords, words, currentWordIndex, timeElapsed, isFinished]);
 
-  // Handle key presses
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (isFinished) return;
 
-      // Start the test on first key
-      if (!isStarted) {
+      // Start timer on first real key
+      if (!isStarted && e.key.length === 1) {
         setIsStarted(true);
-        setStartTime(Date.now());
+        startTimeRef.current = Date.now();
       }
 
       // Tab = restart
@@ -145,40 +131,35 @@ export function useTypingEngine(config: TestConfig) {
       // Backspace
       if (e.key === "Backspace") {
         e.preventDefault();
-        setTypedHistory((prev) => {
-          const newHistory = [...prev];
-          const current = newHistory[currentWordIndex] || "";
+
+        setTypedWords((prev) => {
+          const next = [...prev];
+          const current = next[currentWordIndex] || "";
 
           if (current.length > 0) {
-            newHistory[currentWordIndex] = current.slice(0, -1);
-            setCurrentCharIndex(current.length - 1);
-          } else if (currentWordIndex > 0) {
-            // Go back to previous word
-            setCurrentWordIndex((i) => i - 1);
-            const prevWord = newHistory[currentWordIndex - 1] || "";
-            setCurrentCharIndex(prevWord.length);
+            next[currentWordIndex] = current.slice(0, -1);
+            return next;
           }
-          return newHistory;
+
+          // Go back to previous word if current is empty
+          if (currentWordIndex > 0) {
+            setCurrentWordIndex((i) => i - 1);
+          }
+          return next;
         });
         return;
       }
 
-      // Space = next word
+      // Space → next word
       if (e.key === " ") {
         e.preventDefault();
 
-        setTypedHistory((prev) => {
-          const newHistory = [...prev];
-          // Ensure current word exists
-          if (!newHistory[currentWordIndex]) {
-            newHistory[currentWordIndex] = "";
-          }
-          return newHistory;
-        });
+        // Don't allow empty words
+        const currentTyped = typedWords[currentWordIndex] || "";
+        if (currentTyped.length === 0) return;
 
         const nextIndex = currentWordIndex + 1;
 
-        // Words mode finished?
         if (config.mode === "words" && nextIndex >= (config.wordCount || 25)) {
           setIsFinished(true);
           if (timerRef.current) clearInterval(timerRef.current);
@@ -186,55 +167,58 @@ export function useTypingEngine(config: TestConfig) {
         }
 
         setCurrentWordIndex(nextIndex);
-        setCurrentCharIndex(0);
         return;
       }
 
-      // Regular character
+      // Normal character
       if (e.key.length === 1) {
         e.preventDefault();
 
-        setTypedHistory((prev) => {
-          const newHistory = [...prev];
-          const current = newHistory[currentWordIndex] || "";
-          newHistory[currentWordIndex] = current + e.key;
-          setCurrentCharIndex(current.length + 1);
-          return newHistory;
+        setTypedWords((prev) => {
+          const next = [...prev];
+          const current = next[currentWordIndex] || "";
+          // Limit extra characters a bit
+          if (current.length < (words[currentWordIndex]?.length || 0) + 5) {
+            next[currentWordIndex] = current + e.key;
+          }
+          return next;
         });
       }
     },
-    [isFinished, isStarted, currentWordIndex, config, resetTest]
+    [isFinished, isStarted, currentWordIndex, typedWords, words, config, resetTest]
   );
 
-  // Build character status for rendering
+  // Build character statuses for rendering
   const getCharacterStatuses = useCallback((): CharacterStatus[][] => {
     return words.map((word, wordIdx) => {
-      const typed = typedHistory[wordIdx] || "";
-      const chars: CharacterStatus[] = [];
+      const typed = typedWords[wordIdx] || "";
+      const result: CharacterStatus[] = [];
 
-      for (let i = 0; i < Math.max(word.length, typed.length); i++) {
-        const originalChar = word[i] || "";
+      const maxLen = Math.max(word.length, typed.length);
+
+      for (let i = 0; i < maxLen; i++) {
+        const originalChar = word[i];
         const typedChar = typed[i];
 
         if (typedChar === undefined) {
-          chars.push({ char: originalChar, status: "pending" });
+          result.push({ char: originalChar, status: "pending" });
         } else if (i >= word.length) {
-          chars.push({ char: typedChar, status: "extra" });
+          result.push({ char: typedChar, status: "extra" });
         } else if (typedChar === originalChar) {
-          chars.push({ char: originalChar, status: "correct" });
+          result.push({ char: originalChar, status: "correct" });
         } else {
-          chars.push({ char: originalChar, status: "incorrect" });
+          result.push({ char: originalChar, status: "incorrect" });
         }
       }
 
-      return chars;
+      return result;
     });
-  }, [words, typedHistory]);
+  }, [words, typedWords]);
 
   return {
     words,
     currentWordIndex,
-    currentCharIndex,
+    typedWords,
     isStarted,
     isFinished,
     timeElapsed,
