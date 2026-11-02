@@ -1,4 +1,4 @@
-<img src="./public/favicon-512.png" width="60" height="60">
+<img src="./public/favicon-512.png" width="80" height="80">
 
 # TypeForge.
 
