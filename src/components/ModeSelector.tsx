@@ -1,122 +1,91 @@
-import type { TestMode, WordMode } from "../types";
+import type { ReactNode } from "react";
+import type { QuoteLength, TestConfig, TestMode } from "../types";
 
 interface Props {
-  mode: TestMode;
-  duration: number;
-  wordCount: number;
-  wordMode: WordMode;
-  onModeChange: (mode: TestMode) => void;
-  onDurationChange: (duration: number) => void;
-  onWordCountChange: (count: number) => void;
-  onWordModeChange: (wordMode: WordMode) => void;
+  config: TestConfig;
+  onChange: (patch: Partial<TestConfig>) => void;
+  onOpenCustom: () => void;
 }
 
-export function ModeSelector({
-  mode,
-  duration,
-  wordCount,
-  wordMode,
-  onModeChange,
-  onDurationChange,
-  onWordCountChange,
-  onWordModeChange,
-}: Props) {
+const MODES: TestMode[] = ["time", "words", "quote", "zen", "custom"];
+const DURATIONS = [15, 30, 60, 120];
+const WORD_COUNTS = [10, 25, 50, 100];
+const QUOTE_LENGTHS: QuoteLength[] = ["short", "medium", "long"];
+
+function Btn({ active, onClick, children, title }: { active?: boolean; onClick: () => void; children: ReactNode; title?: string }) {
   return (
-    <div className="flex flex-col items-center gap-4">
-      {/* Primary mode: time / words / quote / zen */}
-      <div className="flex bg-neutral-900 rounded-lg p-1">
-        {(
-          [
-            { id: "time", label: "time" },
-            { id: "words", label: "words" },
-            { id: "quote", label: "quote" },
-            { id: "zen", label: "zen" },
-          ] as const
-        ).map((m) => (
-          <button
-            key={m.id}
-            onClick={() => onModeChange(m.id)}
-            className={`px-4 py-1.5 rounded-md text-sm transition ${
-              mode === m.id
-                ? "bg-neutral-700 text-white"
-                : "text-neutral-400 hover:text-neutral-200"
-            }`}
-          >
-            {m.label}
-          </button>
+    <button
+      onClick={onClick}
+      title={title}
+      className={`rounded-md px-2.5 py-1.5 text-sm transition-colors ${active ? "text-main" : "text-sub hover:text-fg"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+const Sep = () => <span className="mx-1.5 h-5 w-[2px] rounded bg-bg" />;
+
+export function ModeSelector({ config, onChange, onOpenCustom }: Props) {
+  const generated = config.mode === "time" || config.mode === "words";
+
+  return (
+    <div className="inline-flex flex-wrap items-center justify-center rounded-xl bg-subalt px-3 py-1">
+      {generated && (
+        <>
+          <Btn active={config.punctuation} onClick={() => onChange({ punctuation: !config.punctuation })} title="punctuation">
+            @ punctuation
+          </Btn>
+          <Btn active={config.numbers} onClick={() => onChange({ numbers: !config.numbers })} title="numbers">
+            # numbers
+          </Btn>
+          <Sep />
+        </>
+      )}
+
+      {MODES.map((m) => (
+        <Btn
+          key={m}
+          active={config.mode === m}
+          onClick={() => (m === "custom" && !config.customText.trim() ? onOpenCustom() : onChange({ mode: m }))}
+        >
+          {m}
+        </Btn>
+      ))}
+
+      <Sep />
+
+      {config.mode === "time" &&
+        DURATIONS.map((d) => (
+          <Btn key={d} active={config.duration === d} onClick={() => onChange({ duration: d })}>
+            {d}
+          </Btn>
         ))}
-      </div>
+      {config.mode === "words" &&
+        WORD_COUNTS.map((w) => (
+          <Btn key={w} active={config.wordCount === w} onClick={() => onChange({ wordCount: w })}>
+            {w}
+          </Btn>
+        ))}
+      {config.mode === "quote" &&
+        QUOTE_LENGTHS.map((q) => (
+          <Btn key={q} active={config.quoteLength === q} onClick={() => onChange({ quoteLength: q })}>
+            {q}
+          </Btn>
+        ))}
+      {config.mode === "custom" && <Btn onClick={onOpenCustom}>change text</Btn>}
+      {config.mode === "zen" && <span className="px-2 text-sm text-sub">shift + enter to finish</span>}
 
-      {/* Duration / Word count (only for time & words) */}
-      {mode === "time" && (
-        <div className="flex bg-neutral-900 rounded-lg p-1">
-          {[15, 30, 60, 120].map((d) => (
-            <button
-              key={d}
-              onClick={() => onDurationChange(d)}
-              className={`px-3 py-1.5 rounded-md text-sm transition ${
-                duration === d
-                  ? "bg-yellow-500/20 text-yellow-400"
-                  : "text-neutral-400 hover:text-neutral-200"
-              }`}
-            >
-              {d}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {mode === "words" && (
-        <div className="flex bg-neutral-900 rounded-lg p-1">
-          {[10, 25, 50, 100].map((w) => (
-            <button
-              key={w}
-              onClick={() => onWordCountChange(w)}
-              className={`px-3 py-1.5 rounded-md text-sm transition ${
-                wordCount === w
-                  ? "bg-yellow-500/20 text-yellow-400"
-                  : "text-neutral-400 hover:text-neutral-200"
-              }`}
-            >
-              {w}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Punctuation / Numbers toggles */}
-      {(mode === "time" || mode === "words") && (
-        <div className="flex bg-neutral-900 rounded-lg p-1">
-          {(
-            [
-              { id: "normal", label: "abc" },
-              { id: "punctuation", label: "!?" },
-              { id: "numbers", label: "123" },
-              { id: "both", label: "!23" },
-            ] as const
-          ).map((wm) => (
-            <button
-              key={wm.id}
-              onClick={() => onWordModeChange(wm.id)}
-              className={`px-3 py-1.5 rounded-md text-sm transition ${
-                wordMode === wm.id
-                  ? "bg-yellow-500/20 text-yellow-400"
-                  : "text-neutral-400 hover:text-neutral-200"
-              }`}
-              title={
-                wm.id === "normal"
-                  ? "Normal words"
-                  : wm.id === "punctuation"
-                  ? "Punctuation"
-                  : wm.id === "numbers"
-                  ? "Numbers"
-                  : "Punctuation + Numbers"
-              }
-            >
-              {wm.label}
-            </button>
-          ))}
-        </div>
+      {generated && (
+        <>
+          <Sep />
+          <Btn
+            onClick={() => onChange({ wordlist: config.wordlist === "english" ? "code" : "english" })}
+            title="switch word list"
+          >
+            {config.wordlist === "english" ? "english" : "code"}
+          </Btn>
+        </>
       )}
     </div>
   );

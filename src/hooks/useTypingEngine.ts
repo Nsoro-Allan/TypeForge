@@ -1,322 +1,178 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { generateWords, getRandomQuote } from "../lib/words";
-import { saveResult } from "../lib/storage";
-import type {
-  TestConfig,
-  TestStats,
-  CharacterStatus,
-  TestResult,
-  WordMode,
-} from "../types";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import type { PersonalBest, Quote, Settings, TestConfig } from "../types";
+import { initialState, reducer } from "../lib/engine";
+import type { EngineState } from "../lib/engine";
+import { generateWords } from "../lib/words";
+import { pickQuote } from "../lib/quotes";
+import { getBest, pbKey, saveResult } from "../lib/storage";
+import { playKey } from "../lib/sound";
 
-export function useTypingEngine(config: TestConfig) {
-  const [words, setWords] = useState<string[]>([]);
-  const [currentWordIndex, setCurrentWordIndex] = useState(0);
-  const [typedWords, setTypedWords] = useState<string[]>([]);
-  const [isFinished, setIsFinished] = useState(false);
-  const [isStarted, setIsStarted] = useState(false);
-  const [timeElapsed, setTimeElapsed] = useState(0);
+interface Generated {
+  words: string[];
+  quote: Quote | null;
+}
 
-  const inputRef = useRef<HTMLInputElement>(null);
-  const timerRef = useRef<number | null>(null);
-  const startTimeRef = useRef<number | null>(null);
-  const hasSavedRef = useRef(false);
-
-  const resetTest = useCallback(() => {
-    let newWords: string[];
-
-    if (config.mode === "quote") {
-      const quote = getRandomQuote();
-      newWords = quote.split(" ");
-    } else if (config.mode === "zen") {
-      // Generate a long stream for zen
-      newWords = generateWords(200, (config.wordMode as WordMode) || "normal");
-    } else {
-      const count =
-        config.mode === "words" ? config.wordCount || 25 : 100;
-      newWords = generateWords(
-        count,
-        (config.wordMode as WordMode) || "normal"
-      );
+function makeTest(cfg: TestConfig, avoidQuote?: string): Generated {
+  switch (cfg.mode) {
+    case "time":
+      return { words: generateWords(80, cfg), quote: null };
+    case "words":
+      return { words: generateWords(cfg.wordCount, cfg), quote: null };
+    case "quote": {
+      const q = pickQuote(cfg.quoteLength, avoidQuote);
+      return { words: q.text.split(" "), quote: q };
     }
-
-    setWords(newWords);
-    setCurrentWordIndex(0);
-    setTypedWords([]);
-    setIsFinished(false);
-    setIsStarted(false);
-    setTimeElapsed(0);
-    startTimeRef.current = null;
-    hasSavedRef.current = false;
-
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
+    case "custom": {
+      const words = cfg.customText.trim().split(/\s+/).filter(Boolean);
+      return { words: words.length ? words : generateWords(25, cfg), quote: null };
     }
+    case "zen":
+      return { words: [], quote: null };
+  }
+}
 
-    setTimeout(() => inputRef.current?.focus(), 20);
-  }, [config]);
+/** Changing any of these should start a fresh test. */
+const configKey = (c: TestConfig) =>
+  [c.mode, c.duration, c.wordCount, c.punctuation, c.numbers, c.quoteLength, c.wordlist, c.mode === "custom" ? c.customText : ""].join("|");
 
+export interface PbInfo {
+  isPb: boolean;
+  prev: PersonalBest | null;
+}
+
+export function useTypingEngine(config: TestConfig, settings: Settings, enabled: boolean) {
+  const [state, dispatch] = useReducer(reducer, config, (cfg): EngineState => {
+    const g = makeTest(cfg);
+    return initialState(g.words, g.quote, cfg.mode);
+  });
+  const [pb, setPb] = useState<PbInfo | null>(null);
+
+  // Latest values for the long-lived listeners below.
+  const stateRef = useRef(state);
+  const settingsRef = useRef(settings);
+  const configRef = useRef(config);
+  stateRef.current = state;
+  settingsRef.current = settings;
+  configRef.current = config;
+
+  const initialWords = useRef(state.words);
+  const savedFor = useRef(-1);
+
+  const restart = useCallback((repeat = false) => {
+    const cfg = configRef.current;
+    const prev = stateRef.current;
+    const g: Generated = repeat
+      ? { words: initialWords.current, quote: prev.quote }
+      : makeTest(cfg, prev.quote?.text);
+    initialWords.current = g.words;
+    dispatch({ type: "reset", words: g.words, quote: g.quote, mode: cfg.mode });
+    setPb(null);
+  }, []);
+
+  // New test whenever the mode / options change (skip the very first run).
+  const key = configKey(config);
+  const firstRun = useRef(true);
   useEffect(() => {
-    resetTest();
-  }, [resetTest]);
-
-  // Timer
-  useEffect(() => {
-    if (!isStarted || isFinished) return;
-
-    timerRef.current = window.setInterval(() => {
-      if (!startTimeRef.current) return;
-
-      const elapsed = (Date.now() - startTimeRef.current) / 1000;
-      setTimeElapsed(elapsed);
-
-      if (
-        config.mode === "time" &&
-        config.duration &&
-        elapsed >= config.duration
-      ) {
-        setIsFinished(true);
-        if (timerRef.current) clearInterval(timerRef.current);
-      }
-    }, 50);
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [isStarted, isFinished, config]);
-
-  // Save result once when finished
-  useEffect(() => {
-    if (isFinished && !hasSavedRef.current && isStarted) {
-      hasSavedRef.current = true;
-      const stats = getStats();
-
-      const result: TestResult = {
-        ...stats,
-        mode: config.mode,
-        config,
-        timestamp: Date.now(),
-        wordsTyped: currentWordIndex + (typedWords[currentWordIndex] ? 1 : 0),
-        characters: {
-          correct: stats.correctChars,
-          incorrect: stats.incorrectChars,
-          extra: stats.extraChars,
-          missed: stats.missedChars,
-        },
-      };
-
-      saveResult(result);
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
     }
-  }, [isFinished]);
+    restart();
+  }, [key, restart]);
 
-  const getStats = useCallback((): TestStats => {
-    let correct = 0;
-    let incorrect = 0;
-    let extra = 0;
-
-    typedWords.forEach((typed, i) => {
-      const original = words[i] || "";
-      const len = Math.min(typed.length, original.length);
-
-      for (let j = 0; j < len; j++) {
-        if (typed[j] === original[j]) correct++;
-        else incorrect++;
-      }
-
-      if (typed.length > original.length) {
-        extra += typed.length - original.length;
-      }
-    });
-
-    // Include the current word being typed (if not finished)
-    if (!isFinished && currentWordIndex < words.length) {
-      const typed = typedWords[currentWordIndex] || "";
-      const original = words[currentWordIndex] || "";
-      const len = Math.min(typed.length, original.length);
-
-      for (let j = 0; j < len; j++) {
-        if (typed[j] === original[j]) correct++;
-        else incorrect++;
-      }
-      if (typed.length > original.length) {
-        extra += typed.length - original.length;
-      }
+  // Time mode is endless: keep the word stream topped up well ahead of the caret.
+  useEffect(() => {
+    if (config.mode === "time" && state.phase !== "finished" && state.words.length - state.active < 40) {
+      dispatch({ type: "append", words: generateWords(60, config) });
     }
+  }, [config, state.mode, state.phase, state.active, state.words.length]);
 
-    const totalTyped = correct + incorrect + extra;
-    const minutes = Math.max(timeElapsed / 60, 1 / 60);
-
-    const wpm = Math.round(correct / 5 / minutes);
-    const rawWpm = Math.round(totalTyped / 5 / minutes);
-    const accuracy =
-      totalTyped === 0 ? 100 : Math.round((correct / totalTyped) * 100);
-
-    return {
-      wpm: Number.isFinite(wpm) ? Math.max(0, wpm) : 0,
-      rawWpm: Number.isFinite(rawWpm) ? Math.max(0, rawWpm) : 0,
-      accuracy: Number.isFinite(accuracy) ? accuracy : 100,
-      correctChars: correct,
-      incorrectChars: incorrect,
-      extraChars: extra,
-      missedChars: 0,
-      timeElapsed,
-    };
-  }, [typedWords, words, currentWordIndex, timeElapsed, isFinished]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (isFinished) {
-        if (e.key === "Tab") {
-          e.preventDefault();
-          resetTest();
-        }
-        return;
+  // Clock: one sample per second, exact cut-off for time mode.
+  useEffect(() => {
+    if (state.phase !== "running") return;
+    const startedAt = state.startedAt;
+    const limit = configRef.current.mode === "time" ? configRef.current.duration : Infinity;
+    let lastSecond = 0;
+    const id = window.setInterval(() => {
+      const el = (performance.now() - startedAt) / 1000;
+      if (el >= limit) {
+        window.clearInterval(id);
+        dispatch({ type: "finish", elapsed: limit });
+      } else if (Math.floor(el) > lastSecond) {
+        lastSecond = Math.floor(el);
+        dispatch({ type: "tick", elapsed: el });
       }
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [state.phase, state.startedAt, state.testId]);
 
-      // Start timer on first real key
-      if (!isStarted && e.key.length === 1) {
-        setIsStarted(true);
-        startTimeRef.current = Date.now();
-      }
+  // Persist the result exactly once per test and work out personal-best status.
+  useEffect(() => {
+    if (state.phase !== "finished" || !state.result || savedFor.current === state.testId) return;
+    savedFor.current = state.testId;
+    const cfg = configRef.current;
+    const res = state.result;
+    const prev = getBest(cfg);
+    if (res.time >= 1 && res.correct > 0) saveResult({ ...res, config: cfg, timestamp: Date.now() });
+    setPb({ prev, isPb: pbKey(cfg) !== null && res.wpm > 0 && res.wpm > (prev?.wpm ?? 0) });
+  }, [state.phase, state.result, state.testId]);
 
-      // Tab = restart
+  // Keyboard input. Listening on window (not a hidden <input>) means you can
+  // just start typing, exactly like Monkeytype.
+  useEffect(() => {
+    if (!enabled) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const s = stateRef.current;
+      const st = settingsRef.current;
+      const cfg = configRef.current;
+      const target = e.target as HTMLElement | null;
+      const onControl = !!target && (target.tagName === "BUTTON" || target.tagName === "A");
+
       if (e.key === "Tab") {
         e.preventDefault();
-        resetTest();
+        if (!e.repeat) restart();
         return;
       }
-
-      // Escape can also restart in zen or finished
-      if (e.key === "Escape") {
-        e.preventDefault();
-        resetTest();
+      if (e.key === "Enter") {
+        if (e.shiftKey && cfg.mode === "zen" && s.phase === "running") {
+          e.preventDefault();
+          dispatch({ type: "finish", elapsed: (performance.now() - s.startedAt) / 1000 });
+        } else if (s.phase === "finished" && !onControl && !e.repeat) {
+          e.preventDefault();
+          restart();
+        }
         return;
       }
+      if (s.phase === "finished") return;
 
-      // Backspace
+      const wordDelete = e.key === "Backspace" && (e.ctrlKey || e.altKey || e.metaKey);
       if (e.key === "Backspace") {
         e.preventDefault();
-
-        setTypedWords((prev) => {
-          const next = [...prev];
-          const current = next[currentWordIndex] || "";
-
-          if (current.length > 0) {
-            next[currentWordIndex] = current.slice(0, -1);
-            return next;
-          }
-
-          // Go back to previous word if current is empty
-          if (currentWordIndex > 0) {
-            setCurrentWordIndex((i) => i - 1);
-          }
-          return next;
-        });
+        dispatch({ type: "backspace", word: wordDelete, confidence: st.confidence });
         return;
       }
+      if (e.ctrlKey || e.metaKey || (e.altKey && !e.getModifierState("AltGraph"))) return;
 
-      // Space → next word
-      if (e.key === " ") {
-        e.preventDefault();
+      const isSpace = e.key === " ";
+      if (!isSpace && e.key.length !== 1) return;
+      e.preventDefault();
+      if (onControl && target) target.blur(); // so Space can't "click" a focused button
 
-        const currentTyped = typedWords[currentWordIndex] || "";
-        if (currentTyped.length === 0) return;
-
-        const nextIndex = currentWordIndex + 1;
-
-        // Words mode completion
-        if (
-          config.mode === "words" &&
-          nextIndex >= (config.wordCount || 25)
-        ) {
-          setIsFinished(true);
-          if (timerRef.current) clearInterval(timerRef.current);
-          return;
-        }
-
-        // Quote mode completion
-        if (config.mode === "quote" && nextIndex >= words.length) {
-          setIsFinished(true);
-          if (timerRef.current) clearInterval(timerRef.current);
-          return;
-        }
-
-        // Zen: keep going, generate more words if needed
-        if (config.mode === "zen" && nextIndex >= words.length - 20) {
-          setWords((prev) => [
-            ...prev,
-            ...generateWords(50, (config.wordMode as WordMode) || "normal"),
-          ]);
-        }
-
-        setCurrentWordIndex(nextIndex);
+      if (isSpace) {
+        if (s.phase === "running" && s.typed[s.active] !== "") playKey(st.sound, st.volume, "key");
+        dispatch({ type: "space", now: performance.now() });
         return;
       }
+      const word = s.words[s.active];
+      const ok = cfg.mode === "zen" || (word !== undefined && word[s.typed[s.active].length] === e.key);
+      playKey(st.sound, st.volume, ok ? "key" : "error");
+      dispatch({ type: "char", key: e.key, now: performance.now(), stopOnError: st.stopOnError });
+    };
 
-      // Normal character
-      if (e.key.length === 1) {
-        e.preventDefault();
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [enabled, restart]);
 
-        setTypedWords((prev) => {
-          const next = [...prev];
-          const current = next[currentWordIndex] || "";
-          // Limit extra characters
-          if (current.length < (words[currentWordIndex]?.length || 0) + 8) {
-            next[currentWordIndex] = current + e.key;
-          }
-          return next;
-        });
-      }
-    },
-    [
-      isFinished,
-      isStarted,
-      currentWordIndex,
-      typedWords,
-      words,
-      config,
-      resetTest,
-    ]
-  );
-
-  // Build character statuses for rendering
-  const getCharacterStatuses = useCallback((): CharacterStatus[][] => {
-    return words.map((word, wordIdx) => {
-      const typed = typedWords[wordIdx] || "";
-      const result: CharacterStatus[] = [];
-      const maxLen = Math.max(word.length, typed.length);
-
-      for (let i = 0; i < maxLen; i++) {
-        const originalChar = word[i];
-        const typedChar = typed[i];
-
-        if (typedChar === undefined) {
-          result.push({ char: originalChar, status: "pending" });
-        } else if (i >= word.length) {
-          result.push({ char: typedChar, status: "extra" });
-        } else if (typedChar === originalChar) {
-          result.push({ char: originalChar, status: "correct" });
-        } else {
-          result.push({ char: originalChar, status: "incorrect" });
-        }
-      }
-
-      return result;
-    });
-  }, [words, typedWords]);
-
-  return {
-    words,
-    currentWordIndex,
-    typedWords,
-    isStarted,
-    isFinished,
-    timeElapsed,
-    stats: getStats(),
-    characterStatuses: getCharacterStatuses(),
-    inputRef,
-    handleKeyDown,
-    resetTest,
-  };
+  return { state, pb, restart };
 }
